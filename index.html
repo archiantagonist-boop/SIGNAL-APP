@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Шкала состояний</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0f;
+    color: #fff;
+    font-family: monospace;
+    min-height: 100vh;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .header { text-align: center; }
+  .zone-name { font-size: 22px; font-weight: bold; transition: color 0.3s; }
+  .g-value { font-size: 30px; margin-top: 6px; }
+  .g-value span { transition: color 0.3s; }
+
+  canvas {
+    width: 100%;
+    height: 150px;
+    border-radius: 12px;
+    display: block;
+  }
+
+  .slider-wrap { padding: 0 4px; }
+  .slider-track {
+    position: relative;
+    height: 28px;
+    border-radius: 14px;
+    background: linear-gradient(to right,
+      #ff2244 0%, #ff2244 8%,
+      #ff8800 8%, #ff8800 30%,
+      #ffdd00 30%, #ffdd00 43%,
+      #00ff88 43%, #00ff88 53%,
+      #00ccff 53%, #00ccff 54.4%,
+      #aa88ff 54.4%, #aa88ff 65%,
+      #ff44aa 65%, #ff44aa 100%
+    );
+    cursor: pointer;
+    touch-action: none;
+  }
+  .thumb {
+    position: absolute;
+    top: 50%;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    transform: translate(-50%, -50%);
+    transition: background 0.3s;
+    pointer-events: none;
+  }
+
+  .labels {
+    position: relative;
+    height: 20px;
+    margin-top: 4px;
+  }
+  .label {
+    position: absolute;
+    font-size: 10px;
+    transform: translateX(-50%);
+  }
+
+  .buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+  }
+  .btn {
+    padding: 6px 12px;
+    border-radius: 16px;
+    border: 1px solid;
+    background: transparent;
+    color: inherit;
+    font-family: monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn.active { opacity: 1; }
+  .btn:not(.active) { opacity: 0.5; }
+
+  .stats {
+    background: #ffffff08;
+    border-radius: 10px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .stat-label { font-size: 10px; color: #555; }
+  .stat-val { font-size: 14px; }
+
+  .formula {
+    text-align: center;
+    font-size: 10px;
+    color: #333;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="zone-name" id="zoneName">🌀 РЕЗОНАНС</div>
+  <div class="g-value">G = <span id="gVal">1.6787</span></div>
+</div>
+
+<canvas id="c"></canvas>
+
+<div class="slider-wrap">
+  <div class="slider-track" id="track">
+    <div class="thumb" id="thumb"></div>
+  </div>
+  <div class="labels">
+    <span class="label" style="left:8%;color:#ff2244">1/e</span>
+    <span class="label" style="left:31%;color:#ffdd00">π/2</span>
+    <span class="label" style="left:43%;color:#00ff88">e/φ</span>
+    <span class="label" style="left:53%;color:#00ccff">φ²</span>
+    <span class="label" style="left:54.4%;color:#aa88ff">e</span>
+    <span class="label" style="left:65%;color:#ff44aa">2φ</span>
+  </div>
+</div>
+
+<div class="buttons" id="buttons"></div>
+
+<div class="stats">
+  <div><div class="stat-label">G / G_res</div><div class="stat-val" id="s1"></div></div>
+  <div><div class="stat-label">G / φ</div><div class="stat-val" id="s2"></div></div>
+  <div><div class="stat-label">G / π</div><div class="stat-val" id="s3"></div></div>
+  <div><div class="stat-label">G / e</div><div class="stat-val" id="s4"></div></div>
+</div>
+
+<div class="formula">G = (π·α·ω·θ) / (L·λ·η·Pₐ·e) &nbsp;|&nbsp; G_res = e/φ ≈ 1.6787</div>
+
+<script>
+const PI = Math.PI, E = Math.E, PHI = (1+Math.sqrt(5))/2;
+const G_RES = E/PHI, MAX = 5;
+
+const ZONES = [
+  { id:"death",    name:"💀 РАСПАД",   min:0,       max:1/E,     color:"#ff2244" },
+  { id:"sleep",    name:"😴 СПЯЧКА",   min:1/E,     max:PI/2,    color:"#ff8800" },
+  { id:"peak",     name:"⚡ ДЕСИНХР.", min:PI/2,    max:G_RES,   color:"#ffdd00" },
+  { id:"resonance",name:"🌀 РЕЗОНАНС", min:G_RES,   max:PHI*PHI, color:"#00ff88" },
+  { id:"transit",  name:"🚀 ПЕРЕХОД",  min:PHI*PHI, max:E,       color:"#00ccff" },
+  { id:"growth",   name:"📈 РОСТ",     min:E,       max:2*PHI,   color:"#aa88ff" },
+  { id:"chaos",    name:"🌪️ ХАОС",    min:2*PHI,   max:5,       color:"#ff44aa" },
+];
+
+let val = G_RES;
+let dragging = false;
+
+function getZone(v) {
+  return ZONES.find(z => v >= z.min && v < z.max) || ZONES[ZONES.length-1];
+}
+
+// Buttons
+const btns = document.getElementById("buttons");
+ZONES.forEach(z => {
+  const b = document.createElement("button");
+  b.className = "btn";
+  b.textContent = z.name;
+  b.style.borderColor = z.color;
+  b.style.color = z.color;
+  b.dataset.id = z.id;
+  b.onclick = () => { val = z.min + (z.max - z.min)*0.5; update(); };
+  btns.appendChild(b);
+});
+
+function update() {
+  const z = getZone(val);
+  document.getElementById("zoneName").textContent = z.name;
+  document.getElementById("zoneName").style.color = z.color;
+  document.getElementById("gVal").textContent = val.toFixed(4);
+  document.getElementById("gVal").style.color = z.color;
+  document.getElementById("thumb").style.background = z.color;
+  document.getElementById("thumb").style.left = (val/MAX*100)+"%";
+  document.getElementById("s1").textContent = (val/G_RES).toFixed(4);
+  document.getElementById("s1").style.color = z.color;
+  document.getElementById("s2").textContent = (val/PHI).toFixed(4);
+  document.getElementById("s2").style.color = z.color;
+  document.getElementById("s3").textContent = (val/PI).toFixed(4);
+  document.getElementById("s3").style.color = z.color;
+  document.getElementById("s4").textContent = (val/E).toFixed(4);
+  document.getElementById("s4").style.color = z.color;
+  document.querySelectorAll(".btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.id === z.id);
+  });
+}
+
+// Slider
+const track = document.getElementById("track");
+function fromEvent(e) {
+  const r = track.getBoundingClientRect();
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  val = Math.max(0, Math.min(MAX, (x/r.width)*MAX));
+  update();
+}
+track.addEventListener("mousedown", e => { dragging=true; fromEvent(e); });
+window.addEventListener("mousemove", e => dragging && fromEvent(e));
+window.addEventListener("mouseup", () => dragging=false);
+track.addEventListener("touchstart", e => { dragging=true; fromEvent(e); }, {passive:true});
+window.addEventListener("touchmove", e => dragging && fromEvent(e), {passive:true});
+window.addEventListener("touchend", () => dragging=false);
+
+// Canvas animation
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let particles = [];
+let t = 0;
+
+function resize() {
+  canvas.width = canvas.offsetWidth;
+  canvas.height = 150;
+  particles = [];
+  for (let i=0; i<25; i++) {
+    particles.push({
+      x: Math.random()*canvas.width,
+      y: Math.random()*canvas.height,
+      vx: (Math.random()-0.5)*1.5,
+      vy: (Math.random()-0.5)*1.5,
+      r: 1.5+Math.random()*2,
+      angle: Math.random()*Math.PI*2,
+      orbitR: 20+Math.random()*40
+    });
+  }
+}
+resize();
+window.addEventListener("resize", resize);
+
+function draw() {
+  const z = getZone(val);
+  const W = canvas.width, H = canvas.height;
+  t += 0.03;
+  ctx.clearRect(0,0,W,H);
+
+  const pr = (val/MAX)*30 + Math.sin(t*val)*5;
+  ctx.beginPath();
+  ctx.arc(W/2,H/2,Math.abs(pr),0,Math.PI*2);
+  ctx.strokeStyle = z.color+"44";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const count = z.id==="chaos"?25 : z.id==="resonance"?18 : z.id==="death"?4 : 10;
+
+  particles.forEach((p,i) => {
+    const active = i < count;
+    const tr = active ? 1.5+(i%3)*0.5 : 0;
+    p.r += (tr-p.r)*0.05;
+
+    if (z.id==="resonance") {
+      p.angle += 0.025*(val/G_RES);
+      p.x += (W/2+Math.cos(p.angle)*p.orbitR - p.x)*0.05;
+      p.y += (H/2+Math.sin(p.angle)*p.orbitR - p.y)*0.05;
+    } else if (z.id==="chaos") {
+      p.vx = p.vx*0.8+(Math.random()-0.5)*2;
+      p.vy = p.vy*0.8+(Math.random()-0.5)*2;
+      p.x += p.vx; p.y += p.vy;
+    } else if (z.id==="death") {
+      p.x += (W/2-p.x)*0.02; p.y += (H/2-p.y)*0.02;
+    } else {
+      p.x += (Math.random()-0.5)*val*0.2;
+      p.y += (Math.random()-0.5)*val*0.2;
+    }
+
+    if (p.x<0) p.x=W; if (p.x>W) p.x=0;
+    if (p.y<0) p.y=H; if (p.y>H) p.y=0;
+
+    if (p.r>0.1) {
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fillStyle = z.color+"cc";
+      ctx.fill();
+    }
+  });
+
+  requestAnimationFrame(draw);
+}
+draw();
+update();
+
+if (window.Telegram && window.Telegram.WebApp) {
+  Telegram.WebApp.ready();
+  Telegram.WebApp.expand();
+}
+</script>
+</body>
+</html>
